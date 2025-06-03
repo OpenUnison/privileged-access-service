@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scalejs-functions
+  namespace: openunison
+data:
+  functions.js: |-
+    
+
+    function react_load_tasks(eventObj) {
+      var regex = eventObj.config.attributes["incident"].regEx;
+
+      const incRegEx = new RegExp(regex);
+
+      // make a copy of the userData object to update the attributes
+      newUserData = {... eventObj.userData}
+      
+      // make an update of the config to make updates to the list of available tasks
+      newConfig = {... eventObj.config}
+      
+      // retrieve the incident and cluster to pass to the service
+      var incName = eventObj.userData.attributes["incident"];
+      var cluster = eventObj.userData.attributes["cluster"];
+
+      // pre-validate the regex
+      var incMatches = incRegEx.test(incRegEx.test(incName));
+
+      
+      // open a dialog to provide feedback to the user while
+      // the incident service is being contacted
+      eventObj.setDialogTitle("Looking up tasks");
+      eventObj.setDialogText("Looking up tasks for incident '" + incName + "' in cluster '" + cluster + "'");
+      eventObj.setShowDialogButton(false);
+      eventObj.setShowDialog(true);
+
+      // call the incident service with the incident id and the cluster name
+      fetch('/priv-access/api/load-tasks?inc=' + incName + '&cluster=' + cluster)
+        .then(response => {
+          if (response.ok) {
+            return response.json();      
+          } else {
+
+            return response.json();
+          }
+        })
+        .then(taskData => {
+          
+          
+          if (taskData.message) {
+            // there was an error from the incident service
+            eventObj.setSubmitRequestErrors([taskData.message]);
+            eventObj.config.attributes["task"].values=[];
+            eventObj.setUserData(newUserData);
+            eventObj.setConfig(eventObj.config);
+          } else if (taskData.detail) {
+            eventObj.setSubmitRequestErrors([taskData.detail]);
+            eventObj.config.attributes["task"].values=[];
+            eventObj.setUserData(newUserData);
+            eventObj.setConfig(eventObj.config);
+          } 
+          
+          else {
+            // good data back from the incident service
+            // clear the list of available tasks
+            eventObj.config.attributes["task"].values=[];
+            // for each task to create a an array of name/value pairs
+            // that the name is descriptive and the value is JSON
+            for (var i = 0;i<taskData.pamTasks.length;i++) {
+              taskData.pamTasks[i].cluster = cluster;
+              eventObj.config.attributes["task"].values.push({"name":taskData.pamTasks[i].pamTaskID + " - " + taskData.pamTasks[i].expiryTime,"value":JSON.stringify(taskData.pamTasks[i])});
+              if (i == 0) {
+                newUserData.attributes["task"] = JSON.stringify(taskData.pamTasks[i]);
+              }
+            }
+
+            // update the react objects, clear the errors
+            eventObj.setUserData(newUserData);
+            eventObj.setConfig(eventObj.config);
+            eventObj.setSubmitRequestErrors([]);
+          }
+
+
+          // disable the dialog
+          eventObj.setShowDialog(false);
+          
+          
+        });
+
+
+      
+    }
+---
+apiVersion: openunison.tremolo.io/v1
+kind: Application
+metadata:
+  name: priv-access-apis
+  namespace: openunison
+  labels:
+    app.kubernetes.io/name: openunison
+    app.kubernetes.io/instance: openunison-orchestra
+    app.kubernetes.io/component: openunison-applications
+    app.kubernetes.io/part-of: openunison
+spec:
+  azTimeoutMillis: 3000
+  isApp: true
+  urls:
+  - hosts:
+    - "#[OU_HOST]"
+    filterChain:
+    - className: com.tremolosecurity.proxy.filters.JavaScriptFilter
+      params:
+        javaScript: |-
+          
+          GlobalEntries = Java.type("com.tremolosecurity.server.GlobalEntries");
+          HashMap = Java.type("java.util.HashMap");
+          BasicHttpClientConnectionManager = Java.type("org.apache.http.impl.conn.BasicHttpClientConnectionManager");
+          RequestConfig = Java.type("org.apache.http.client.config.RequestConfig");
+          CookieSpecs = Java.type("org.apache.http.client.config.CookieSpecs");
+          HttpClients = Java.type("org.apache.http.impl.client.HttpClients");
+          HttpGet = Java.type("org.apache.http.client.methods.HttpGet");
+          EntityUtils = Java.type("org.apache.http.util.EntityUtils");
+          BasicHeader = Java.type("org.apache.http.message.BasicHeader");
+          UUID = Java.type("java.util.UUID");
+
+          function initFilter(config) {
+
+          }
+
+          
+
+          function doFilter(request,response,chain) {
+            ProxyConstants = Java.type("com.tremolosecurity.proxy.util.ProxyConstants");
+            System = Java.type("java.lang.System");
+
+            userData = (request.getSession().getAttribute(ProxyConstants.AUTH_CTL)).getAuthInfo();
+            var incident = request.getParameter("inc").getValues().get(0);
+            var cluster = request.getParameter("cluster").getValues().get(0);
+            var bhcm = new BasicHttpClientConnectionManager(GlobalEntries.getGlobalEntries().getConfigManager().getHttpClientSocketRegistry());
+            var rc = RequestConfig.custom().setCookieSpec(CookieSpecs.STANDARD).setRedirectsEnabled(false).build();
+            var http = HttpClients.custom().setConnectionManager(bhcm).setDefaultRequestConfig(rc).build();
+
+            
+            var sessionId = UUID.randomUUID().toString();
+            request.getSession().setAttribute("tremolo.io/priv-session-id",sessionId);
+            
+
+            try {
+              // need to add regex check
+              var get = new HttpGet("http://pamapi.openunison.svc/verify-access?user_id=" + userData.getAttribs().get("sub").getValues().get(0) + "&cluster_id=" + cluster + "&ticket_number=" + incident);
+              System.out.println(get);
+              get.addHeader(new BasicHeader("tremoloio-request-type","load"));
+              get.addHeader(new BasicHeader("tremoloio-priv-session-id",sessionId));
+
+              svcResp = http.execute(get);
+              if (svcResp.getStatusLine().getStatusCode() == 200) {
+                response.getWriter().println(EntityUtils.toString(svcResp.getEntity()));
+              } else {
+                response.setStatus(svcResp.getStatusLine().getStatusCode());
+                response.getWriter().println(EntityUtils.toString(svcResp.getEntity()));
+              }
+            } finally {
+              if (http) {
+                http.close();
+              }
+              if (bhcm) {
+                bhcm.close();
+              }
+            }
+            
+            
+            
+          }
+    uri: /priv-access/api/load-tasks
+    authChain: login-service
+    overrideHost: true
+    overrideReferer: true
+    azRules:
+    - scope: custom
+      constraint: cluster-admin
+    results: 
+      azFail: default-login-failure
+      auFail: default-login-failure
+  cookieConfig:
+    sessionCookieName: tremolosession
+    domain: "#[OU_HOST]"
+    secure: true
+    httpOnly: true
+    logoutURI: "/logout"
+    keyAlias: session-unison
+    timeout: 900
+    scope: -1
+    cookiesEnabled: true

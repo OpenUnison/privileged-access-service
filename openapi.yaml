@@ -1,0 +1,159 @@
+openapi: 3.0.0
+info:
+  title: Cluster Access Verification API
+  version: 1.0.0
+servers:
+- url: /
+paths:
+  /verify-access:
+    get:
+      operationId: verify_access
+      parameters:
+      - explode: true
+        in: query
+        name: user_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/UserId'
+        style: form
+      - explode: true
+        in: query
+        name: cluster_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Cluster'
+        style: form
+      - description: "The record number, format should be INC1234567 for Ticket\
+          \ records and CHG1234567 for Change records."
+        explode: true
+        in: query
+        name: ticket_number
+        required: true
+        schema:
+          $ref: '#/components/schemas/Ticket'
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessVerificationResponse'
+          description: Access verification result
+        "400":
+          content:
+            application/json:
+              examples:
+                invalidUser:
+                  summary: Example of an Invalid User error
+                  value:
+                    message: The user ID 'user123' does not exist or is not formatted
+                      correctly.
+                changeExpired:
+                  summary: Change Record Expired
+                  value:
+                    message: Change record has expired !
+                IncidentTicketClosed:
+                  summary: Incident Ticket Closed
+                  value:
+                    message: Incident Ticket Closed !
+                pamTasksExpired:
+                  summary: PAM Tasks Expired
+                  value:
+                    message: |
+                      "PAM1234567,PAM7654321 has expired"
+                noPamTasks:
+                  summary: No Active Pam Tasks for userID
+                  value:
+                    message: User 1234567-GEN does not have any active PAM Tasks
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request parameters
+        "500":
+          content:
+            application/json:
+              examples:
+                snowApiError:
+                  summary: Snow API Error
+                  value:
+                    message: Cannot query Snow API for information
+                serverError:
+                  summary: API Server Error
+                  value:
+                    message: "Cannot process request, internal error"
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal server processing error
+      summary: Verify user access to a cluster
+      tags:
+      - openunison
+      
+components:
+  schemas:
+    Ticket:
+      pattern: "^[iI][nN][cC]\\d{7,8}$|^[cC][hH][gG]\\d{7,8}$"
+      type: string
+    PamTask:
+      pattern: "^[pP][aA][mM]\\d{7}$"
+      type: string
+    UserId:
+      description: "The ID of the user, which can be a number or a string."
+      type: string
+    Cluster:
+      description: "The ID of the cluster, following the format of a two-letter country\
+        \ code, a three-letter cluster identifier, and a 3 or 4 digit number (e.g.,\
+        \ hk-aza-100). This also caters for the legacy cn-ikp-xxx pinnacle cluster nameing scheme"
+      pattern: "^.*$"
+      type: string
+    AccessVerificationResponse:
+      description: Contains a list of PAM tasks with associated expiry times for access
+        verification.
+      example:
+        pamTasks:
+        - pamTaskID: pamTaskID
+          expiryTime: 2000-01-23T04:56:07.000+00:00
+        - pamTaskID: pamTaskID
+          expiryTime: 2000-01-23T04:56:07.000+00:00
+      properties:
+        pamTasks:
+          items:
+            $ref: '#/components/schemas/PamTaskDetail'
+          title: pamTasks
+          type: array
+      required:
+      - pamTasks
+      title: AccessVerificationResponse
+      type: object
+    PamTaskDetail:
+      description: Represents a PAM task with an ID and an associated expiry time
+        for access verification.
+      example:
+        pamTaskID: pamTaskID
+        expiryTime: 2000-01-23T04:56:07.000+00:00
+      properties:
+        pamTaskID:
+          description: "The ID of the PAM task, following the format PAM1234567."
+          pattern: "^PAM\\d{7}$"
+          title: pamTaskID
+          type: string
+        expiryTime:
+          description: "The time at which the PAM task access verification result\
+            \ expires, in ISO 8601 format."
+          format: date-time
+          title: expiryTime
+          type: string
+      required:
+      - expiryTime
+      - pamTaskID
+      title: PamTaskDetail
+      type: object
+    ErrorResponse:
+      description: |
+        This will contain the error message related to the validation of the user request.
+      properties:
+        message:
+          title: message
+          type: string
+      required:
+      - message
+      title: ErrorResponse
+      type: object
